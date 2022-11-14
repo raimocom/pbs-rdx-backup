@@ -1,0 +1,60 @@
+#!/bin/bash
+model_string="RDX"
+
+# better way of detecting RDX drive
+for i in $(ls /sys/block/ 2>/dev/null)
+do
+        device_model=$(cat /sys/block/$i/device/model 2>/dev/null)
+	if [ $device_model = $model_string ] 2>/dev/null
+	then
+		rdx_device_name=$i
+	fi
+
+done
+
+# improper way to do it
+#rdx_bus_id=$(dmesg | grep RDX | grep scsi | cut -d " " -f 7)
+#rdx_device_name=$(dmesg | grep "sd $rdx_bus_id" | grep disk | cut -d "[" -f 3 | cut -d "]" -f 1)
+
+if [ ! -z $rdx_device_name ]
+then
+	if [ -b /dev/$rdx_device_name ]
+	then
+		# get media size
+		rdx_size=$(cat /sys/block/sdb/device/block/sdb/size)
+		rdx_size_mb=$(echo "scale=0 ; $rdx_size / 1024 / 1024 / 2" | bc -l)
+
+		echo /dev/$rdx_device_name - $rdx_size_mb MB
+	else
+		echo no block device
+	fi
+else
+	echo no device found
+	exit 1
+fi
+
+# prepare media if totally empty
+partition_list=$(wipefs /dev/$rdx_device_name)
+if [ $? -eq 0 ]
+then
+	if [ -z "$partition_list" ]
+	then
+		#prepare file system
+		media_mount_dir='/media/rdx-media'
+		zpool_name_string="AA-Fi-DASI_$(date +%a)"
+
+		zpool create -o ashift=12 -m $media_mount_dir $zpool_name_string /dev/$rdx_device_name
+		zfs set atime=off $zpool_name_string
+		zfs set compression=off $zpool_name_string
+		zpool status $zpool_name_string
+		touch $media_mount_dir/.rdx-media
+		zpool export $zpool_name_string
+	else
+		echo partition list not empty on /dev/$rdx_device_name
+		exit
+	fi
+
+else
+	echo error getting partition list from /dev/$rdx_device_name
+fi
+
