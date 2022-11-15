@@ -21,7 +21,7 @@ then
 	if [ -b /dev/$rdx_device_name ]
 	then
 		# get media size
-		rdx_size=$(cat /sys/block/sdb/device/block/sdb/size)
+		rdx_size=$(cat /sys/block/$rdx_device_name/device/block/$rdx_device_name/size)
 		rdx_size_mb=$(echo "scale=0 ; $rdx_size / 1024 / 1024 / 2" | bc -l)
 
 		echo /dev/$rdx_device_name - $rdx_size_mb MB
