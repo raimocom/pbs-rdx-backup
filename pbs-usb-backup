@@ -2,67 +2,37 @@
 
 echo $0 - a PBS datastore to USB media sync tool
 
+# change to script dir
+cd "$(dirname "$0")"
+
+# collect backup media data
+./gather_backup_media.sh
+
+function cleanup_and_exit () {
+	umount $backup_target
+};
+
+
 # default settings
-backup_source=/mnt/pve/PBS-Datastore-1/
-backup_target=/media/rdx-media/
-backup_media_name_pattern=AA-Fi
+backup_source=/PBS-WD-2TB-intern
+backup_fs_label=nbp-usb-backup
+backup_target=/media/$backup_fs_label
+backup_pbs_datastore_folder=pbs-datastore-backup
 
-#detect an prepare backup media
-/opt/detect_rdx_drive
+# mount backup media
+umount $backup_target
+mkdir $backup_target
+mount /dev/disk/by-label/$backup_fs_label $backup_target
+mkdir $backup_target/$backup_pbs_datastore_folder
 
-# check if media is mounted already
-backup_media_mounted=$(zpool list -o name 2>/dev/null | grep $backup_media_name_pattern)
-
-#unmount media, if already mounted
-if [ ! -z "$backup_media_mounted" ]
-then
-	echo -n "RDX media $backup_media_mounted already mounted. Unmounting to cleanup . . ."
-	zpool export $backup_media_mounted
-	if [ $? -ne 0 ]
-	then
-		echo ". . . failed. Exiting."
-		exit 1
-	else
-		echo ". . . ok"
-	fi
-fi
-
-
-# find rdx media
-echo -n "Looking for RDX media . . ."
-backup_media=$(zpool import 2>/dev/null | grep pool: | cut -d ":" -f 2 | cut -d " " -f 2 | grep $backup_media_name_pattern)
-
-# mount rdx file system
-if [ ! -z "$backup_media" ]
+# check for backup media marker file
+echo -n "Checking for marker file $backup_target/.pbs-usb-backup-media . . ."
+if [ -f "${backup_target}/.pbs-usb-backup-media" ]
 then
 	echo " . . found"
-	echo -n "Mounting RDX media . . ."
-	zpool import $backup_media
-	if [ $? -ne 0 ]
-	then  
-		echo " . . error mounting $backup_media. Exiting."
-		exit 1
-	else
-		echo " . . ok"
-	fi
-else
-	echo " . . no RDX media found. Exiting."
-	exit 1
-
-fi
-
-# detect rdx device name for medie eject
-rdx_device=$(zpool status $backup_media | tail -n 3 | head -n 1 | cut -f 2 | cut -d " " -f 3)
-echo "RDX device name is /dev/$rdx_device"
-
-# check if rdx media successfully 
-echo -n "Checking for marker file .rdx-media . . ."
-if [ -f "/media/rdx-media/.rdx-media" ]
-then
-	echo " . . found"
-	# rsync over datastore to rdx
-	echo "rsync data from $backup_source to $backup_target"
-	rsync -a --stats --exclude='lost+found' --delete $backup_source $backup_target
+	# rsync over datastore to usb backup media
+	echo "rsync data from $backup_source to $backup_target/$backup_pbs_datastore_folder"
+	rsync -a --stats --exclude='lost+found' --delete $backup_source $backup_target/$backup_pbs_datastore_folder
 	if [ $? = 0 ]
 	then
 		echo "rsync ok"
@@ -71,16 +41,7 @@ then
 	fi
 else
 	echo " . . not found. Exiting."
-	zpool export $backup_media
+	cleanup_and_exit 
 	exit 1
 fi
-
-# export pool and eject
-echo exporting media $backup_media on /dev/$rdx_device
-zpool export $backup_media
-
-echo ejecting rdx media on /dev/$rdx_device
-eject /dev/$rdx_device
-
-# zfs scrub (every few backup cycles)
-
+cleanup_and_exit 
