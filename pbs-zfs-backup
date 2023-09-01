@@ -1,43 +1,166 @@
 #!/bin/bash
+set -o errtrace
+trap 'echo ERROR: Fehler in Funktion "$FUNCNAME", Errorcode "$?" ; exit 1' ERR
 
-echo $0 - a PBS ZFS datastore to USB media sync tool
+#set -xv
+
+echo "$0" - a PBS ZFS datastore to USB media sync tool
 
 # default settings
 backup_sourceZfs=PBS-WD-2TB-intern
-backup_targetZfs=pbs-zfs-usb-backup
+# backup_targetZfs=pbs-zfs-usb-backup
+backup_snapshot_basename=pbs-backupsnap
 
 # ---------------------
 
 # change to script dir
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
+
+msg() { echo "$*" 1>&2; }
+
+log () {
+	timestamp=$(date +%Y-%m-%d_%H:%M:%S)
+	echo "$timestamp" - "$*";
+}
 
 cleanup_and_exit () {
-	umount $backup_target\
-	;
+	true;
 }
 
 prepare_empty_media () {
-	wipefs -a $backupDrive &&\
-	zpool create -m /$backup_targeZfs -o ashift=12 $backup_targetZfs $backupDrive &&\
-	zfs set canmount=noauto com.sun:auto-snapshot $backup_targetZfs\
+	wipefs -a "$backupDrive" &&\
+	zpool create -m /"$backup_targetZfs" -o ashift=12 "$backup_targetZfs" "$backupDrive" &&\
+	zfs set canmount=noauto com.sun:auto-snapshot=false "$backup_targetZfs"\
 	;
 }
 
-list_backup_snapshots () {
-	# input value: $1 -> ZFS file system
-	zfs list -t snapshot -s creation -o name -H $1 | awk  -F @ '{if ( $2 ~ /pbs-backupsnap_[0-9]+/ ) {print $2} }'\
+list_snapshots () {
+# IN : $1 -> ZFS file system
+# OUT: list of snapshots, newest last
+	zfs list -t snapshot -s creation -o name -H "$1" | awk  -F @ '{if($2 ~ /pbs-backupsnap_[0-9]+/){print $2}}'\
 	;
 }
 
 
 
 resume_send () {
-	zfs send -t $(zfs get -o value -H receive_resume_token $backup_targetZfs) | zfs receive -s $backup_targetZfs
+# IN: resume token
+# OUT: none
+	zfs send -t "$1" | zfs receive -sFv "$backup_targetZfs"
+}
+
+identify_backup_media () {
+	diff fixed_disks.list <(ls /dev/disk/by-id) | tail -n +2 | awk '{if ( $NF !~ /part[0-9]+$/ ) {print $NF} }'
+}
+
+detect_backup_pool () {
+# INPUT: none
+# OUTPUT: ZFS poolname
+	for hdd in $(awk '{print $1}' <backup_media.db) ; do
+		for partition in /dev/disk/by-id/"$hdd"*part* ; do
+			zpool import -o name -d "$partition" 2>/dev/null | awk '{if($1 ~ /pool:/){print $2}}'
+		done
+	done
+}
+
+get_last_backup_snapshot () {
+# IN : ZFS file system
+# OUT: last backup snapshot
+	echo $(zfs list -o name -H -s creation -t snapshot "$1"  | tail -n 1 | awk -F @ '{print $2}')
+}
+
+do_incremental_send () {
+# INPUT: $1 ->  ZFS start snapshot ; $2 -> ZFS end snapshot
+# OUTPUT: none
+	zfs send -V "$backup_sourceZfs"@"$2" -i @"$1" | zfs recv -sFv "$backup_targetZfs"
+}
+
+get_resume_token () {
+# IN: ZFS file system
+# OUT: ZFS receive_resume_token
+	local token=$(zfs get receive_resume_token -o value -H "$1")
+	if [[ $token != - ]]; then echo $token ; fi
+}
+
+detect_inserted_backuppool () {
+# IN : none
+# OUT: vars; backuppool backup_media_name
+	unset backuppool
+	unset backup_media_name
+	for pool in $(zpool status | awk '{if($1 ~ /pool:/){print $2}}') ; do
+		for poolstats in $(zpool status "$pool" | awk '{print $1}') ; do
+			for drive in $(awk '{print $1}' <backup_media.db ) ; do
+				if [[ $poolstats == $drive ]] ; then
+				       backup_pool=$pool
+				       backup_media_name=$drive
+				fi
+			done
+		done
+	done
 }
 
 
-#-#-# MAIN #-#-#
 
+
+#-#-#-#-#-#-#-#-#-#-# MAIN #-#-#-#-#-#-#-#-#-#-#-#-#
+
+# identify backup media
+log "Suche Backupmedium . . ."
+backup_media_name=$(identify_backup_media)
+if [[ -z $backup_media_name ]] ; then
+	log "ERROR: Kein Backupmedium angeschlossen. Exit"
+	exit 1
+else
+	log "Backupmedium $backup_media_name gefunden"
+fi
+
+# backup pool already imported?
+log "Suche Backuppool . . ."
+detect_inserted_backuppool
+if [[ $backup_media_name && $backup_pool ]] ; then
+	log ". . . bereits importiert ($backup_pool auf $backup_media_name)" 
+	backup_targetZfs="$backup_pool"
+else
+	# identify backup pool on backup media
+	backup_targetZfs=$(detect_backup_pool)
+	if [[ -z $backup_targetZfs ]] ; then 
+		log ". . . kein importierbarer Backup-Pool gefunden" 
+		exit 1
+		########## prepare new backup media with new zpool (zpool create)
+	else
+       		log Backup-Pool ist "$backup_targetZfs"
+		log "Importiere $backup_targetZfs . ."
+		zpool import "$backup_targetZfs"
+		log '. . fertig'
+	fi
+fi
+
+
+log "Resume Token auf $backup_targetZfs vorhanden? . ." 
+resume_token=$(get_resume_token "$backup_targetZfs")
+if [ -z "$resume_token" ]
+then
+	log ". . nein"
+else
+	log "$resume_token"
+	log ". . ja. Setze Senden von $backup_sourceZfs zu $backup_targetZfs fort .. "
+	resume_send "$resume_token"
+	[ $? -ne 0 ] && { log "Fehler bei resume_send, Exit" ; exit 1 ; }
+	log ". . fertig."
+fi
+
+
+log "Sende inkrementellen ZFS stream . ."
+zfs_target_snap=$(get_last_backup_snapshot "$backup_sourceZfs")
+zfs_incremental_snap=$(get_last_backup_snapshot "$backup_targetZfs")
+do_incremental_send $zfs_incremental_snap $zfs_target_snap
+
+log ". .  fertig"
+log "Exportiere Pool . ."
+zpool export "$backup_targetZfs"
+log ". . fertig."
+
+	
 
 ### check for available backup media
 ## WIP, defines $backupDrive
@@ -56,29 +179,3 @@ resume_send () {
 # zfs destroy all snapshots that are not the last snapshot on any of the backup media (snapshot_holds.db)
 # zpool export $backup_targetZfs
 
-# mount backup media
-umount $backup_target
-mkdir $backup_target
-mount /dev/disk/by-label/$backup_fs_label $backup_target
-mkdir $backup_target/$backup_pbs_datastore_folder
-
-# check for backup media marker file
-echo -n "Checking for marker file $backup_target/.pbs-usb-backup-media . . ."
-if [ -f "${backup_target}/.pbs-usb-backup-media" ]
-then
-	echo " . . found"
-	# rsync over datastore to usb backup media
-	echo "rsync data from $backup_source to $backup_target/$backup_pbs_datastore_folder"
-	rsync -a --stats --exclude='lost+found' --delete $backup_source $backup_target/$backup_pbs_datastore_folder
-	if [ $? = 0 ]
-	then
-		echo "rsync ok"
-	else
-		echo "rsync reported ERRORS!"
-	fi
-else
-	echo " . . not found. Exiting."
-	cleanup_and_exit 
-	exit 1
-fi
-cleanup_and_exit 
