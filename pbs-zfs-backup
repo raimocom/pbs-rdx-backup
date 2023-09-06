@@ -8,13 +8,16 @@ echo "$0" - a PBS ZFS datastore to USB media sync tool
 
 # default settings
 backup_sourceZfs=PBS-WD-2TB-intern
-# backup_targetZfs=pbs-zfs-usb-backup
 backup_snapshot_basename=pbs-backupsnap
 
 # ---------------------
 
 # change to script dir
 cd "$(dirname "$0")" || exit 1
+declare backup_targetZfs
+declare -A snapshot_tracker
+declare backup_media_name
+declare -i lowest_snapshot_number
 
 msg() { echo "$*" 1>&2; }
 
@@ -27,6 +30,24 @@ cleanup_and_exit () {
 	true;
 }
 
+read_snapshot_tracker_db () {
+	unset lowest_snapshot_number
+	[[ -f snapshot_tracker.db ]] || return 1
+	while read drivename snapshot_number ; do
+	snapshot_tracker[$drivename]=$snapshot_number
+	[[ -z $lowest_snapshot_number || $snapshot_number < $lowest_snapshot_number ]] && lowest_snapshot_number=$snapshot_number
+	done <snapshot_tracker.db 
+	log "$0 -> lowest_snapshot_number is $lowest_snapshot_number"
+}
+
+write_snapshot_tracker_db () {
+	for key in "${!snapshot_tracker[@]}" ; do
+		echo $key ${snapshot_tracker[$key]}
+	done >snapshot_tracker.db
+	#update snapshot_tracker array for removal of old snapshots
+	read_snapshot_tracker_db
+}
+
 prepare_empty_media () {
 	wipefs -a "$backupDrive" &&\
 	zpool create -m /"$backup_targetZfs" -o ashift=12 "$backup_targetZfs" "$backupDrive" &&\
@@ -37,8 +58,7 @@ prepare_empty_media () {
 list_snapshots () {
 # IN : $1 -> ZFS file system
 # OUT: list of snapshots, newest last
-	zfs list -t snapshot -s creation -o name -H "$1" | awk  -F @ '{if($2 ~ /pbs-backupsnap_[0-9]+/){print $2}}'\
-	;
+	zfs list -t snapshot -s creation -o name -H "$1" | awk  -F @ '{if($2 ~ /pbs-backupsnap_[0-9]+/){print $2}}'
 }
 
 
@@ -66,13 +86,36 @@ detect_backup_pool () {
 get_last_backup_snapshot () {
 # IN : ZFS file system
 # OUT: last backup snapshot
-	echo $(zfs list -o name -H -s creation -t snapshot "$1"  | tail -n 1 | awk -F @ '{print $2}')
+	zfs list -o name -H -s creation -t snapshot "$1"  | tail -n 1 | awk -F @ '{print $2}'
 }
+
+remove_old_snapshots () {
+	[[ -z $1 ]] && return 1
+	if [[ $1 == $backup_sourceZfs ]] ; then
+		# read snapshot_tracker and remove all from backup_sourceZfs but oldest one existing on any backup media 
+		for snap in $(list_snapshots "$1" | awk '{ match($0, /[0-9]+$/) ; print substr ($0,RSTART,RLENGTH) }') ; do
+			if [[ $snap < $lowest_snapshot_number ]] ; then
+				log "removing ${backup_sourceZfs}@${backup_snapshot_basename}_$snap..."
+				echo "zfs destroy ${backup_sourceZfs}@${backup_snapshot_basename}_$snap"
+				log "... done"
+			fi
+		done
+	else
+		# remove all but last snapshot from backup media
+		for snap in $(list_snapshots "$1" | head -n -1) ; do 
+			log "removing ${backup_targetZfs}@$snap..."
+			echo "zfs destroy ${backup_targetZfs}@$snap"
+			log "... done"
+		done
+
+	fi
+}
+
 
 do_incremental_send () {
 # INPUT: $1 ->  ZFS start snapshot ; $2 -> ZFS end snapshot
-# OUTPUT: none
-	zfs send -V "$backup_sourceZfs"@"$2" -i @"$1" | zfs recv -sFv "$backup_targetZfs"
+# OUTPUT: none (+ update snapshot_tracker)
+	zfs send -V "$backup_sourceZfs"@"$2" -i @"$1" | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$2" | awk -F _ '{print $2}')
 }
 
 get_resume_token () {
@@ -85,8 +128,6 @@ get_resume_token () {
 detect_inserted_backuppool () {
 # IN : none
 # OUT: vars; backuppool backup_media_name
-	unset backuppool
-	unset backup_media_name
 	for pool in $(zpool status | awk '{if($1 ~ /pool:/){print $2}}') ; do
 		for poolstats in $(zpool status "$pool" | awk '{print $1}') ; do
 			for drive in $(awk '{print $1}' <backup_media.db ) ; do
@@ -114,6 +155,7 @@ else
 	log "Backupmedium $backup_media_name gefunden"
 fi
 
+
 # backup pool already imported?
 log "Suche Backuppool . . ."
 detect_inserted_backuppool
@@ -136,6 +178,14 @@ else
 fi
 
 
+# ---- TESTING below----
+
+#read_snapshot_tracker_db
+#remove_old_snapshots $backup_targetZfs
+#remove_old_snapshots $backup_sourceZfs
+
+# ----- TESTING above------
+
 log "Resume Token auf $backup_targetZfs vorhanden? . ." 
 resume_token=$(get_resume_token "$backup_targetZfs")
 if [ -z "$resume_token" ]
@@ -149,22 +199,41 @@ else
 	log ". . fertig."
 fi
 
+# read snapshot_tracker.db into associative array snapshot_tracker[]
+read_snapshot_tracker_db
 
-log "Sende inkrementellen ZFS stream . ."
 zfs_target_snap=$(get_last_backup_snapshot "$backup_sourceZfs")
 zfs_incremental_snap=$(get_last_backup_snapshot "$backup_targetZfs")
-do_incremental_send $zfs_incremental_snap $zfs_target_snap
 
-log ". .  fertig"
+
+if [[ $zfs_incremental_snap == $zfs_target_snap ]] ; then
+	log "aktuellster Snapshot $zfs_target_snap auf Backupmedium vorhanden, nichts zu tun"
+else
+	if [[ -z $zfs_incremental_snap ]] ; then
+		log "Kein Snapshot auf Backupmedium, sende komplettes Filesystem... (TODO!)"
+		#do_full_send (send full ZFS stream)
+	else
+		log "Sende inkrementellen ZFS stream . . ($zfs_incremental_snap -> $zfs_target_snap)"
+		snapshot_tracker[$backup_media_name]=$(echo "$zfs_incremental_snap" | awk -F _ '{print $2}')
+		do_incremental_send $zfs_incremental_snap $zfs_target_snap
+		log ". .  fertig"
+	fi
+
+fi
+
+#write snapshot_tracker.db
+#snapshot_tracker[$backup_media_name]=$(echo "$zfs_target_snap" | awk -F _ '{print $2}') --> moved to do_incremental_send()
+write_snapshot_tracker_db
+
+remove_old_snapshots $backup_targetZfs
+remove_old_snapshots $backup_sourceZfs
+
 log "Exportiere Pool . ."
 zpool export "$backup_targetZfs"
 log ". . fertig."
 
 	
 
-### check for available backup media
-## WIP, defines $backupDrive
-##  search for connected, available backup media (iterate over backup_media.db if any is present)
 ## read disk-id, vendor, serial, capacity from 
 
 ### check media condition 
@@ -177,5 +246,4 @@ log ". . fertig."
 #### cleanup
 # zfs destroy all but last snapshot on backup media
 # zfs destroy all snapshots that are not the last snapshot on any of the backup media (snapshot_holds.db)
-# zpool export $backup_targetZfs
 
