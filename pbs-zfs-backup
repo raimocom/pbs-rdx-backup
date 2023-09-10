@@ -103,6 +103,14 @@ get_last_backup_snapshot_number () {
 	zfs list -o name -H -s creation -t snapshot "$1"  | tail -n 1 | awk -F _ '{print $NF}' | grep -E '^[0-9]+$'
 }
 
+create_snapshot () {
+# IN : ZFS file system
+# OUT: none
+	[[ -z $1 ]] && return 1
+	zfs snapshot "$1"@"$backup_snapshot_basename"_$(($(get_last_backup_snapshot_number "$1")+1))
+}
+
+
 remove_old_snapshots () {
 	[[ -z $1 ]] && return 1
 	if [[ $1 == $backup_sourceZfs ]] ; then
@@ -110,7 +118,7 @@ remove_old_snapshots () {
 		for snap in $(list_snapshots "$1" | awk '{ match($0, /[0-9]+$/) ; print substr ($0,RSTART,RLENGTH) }') ; do
 			if [[ $(($snap+1)) < $lowest_snapshot_number ]] ; then
 				log "removing ${backup_sourceZfs}@${backup_snapshot_basename}_$snap . ."
-				echo zfs destroy ${backup_sourceZfs}@${backup_snapshot_basename}_$snap
+				zfs destroy ${backup_sourceZfs}@${backup_snapshot_basename}_$snap
 				log ". . done"
 			fi
 		done
@@ -182,6 +190,10 @@ else
 	log "Backupmedium $backup_media_name gefunden"
 fi
 
+# create new snapshot on source
+log "Letzter Snapshot $backup_sourceZfs@$(get_last_backup_snapshot_name $backup_sourceZfs). Erzeuge neuen ZFS-Snapshot . ."
+create_snapshot "$backup_sourceZfs"
+log ". . ok (@$(get_last_backup_snapshot_name $backup_sourceZfs))"
 
 # backup pool already imported?
 log "Suche Backuppool . . ."

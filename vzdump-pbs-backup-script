@@ -4,9 +4,9 @@ timestamp=$(date +"%Y.%m.%d %H:%M:%S")
 
 case "${1}" in
 	job-end)
-		echo "+++++ Backup START" $(date +"%Y.%m.%d %H:%M:%S") >>/var/log/pbs-usb-backup.log
-		/opt/proxmox-rdx-backup/pbs-usb-backup >>/var/log/pbs-usb-backup.log 2>&1
-		echo "----- Backup END  " $(date +"%Y.%m.%d %H:%M:%S") >>/var/log/pbs-usb-backup.log
+		echo "+++++ Backup START" $(date +"%Y.%m.%d %H:%M:%S") >>/var/log/pbs-zfs-backup.log
+		/opt/proxmox-rdx-backup/pbs-zfs-backup >>/var/log/pbs-zfs-backup.log 2>&1
+		echo "----- Backup END  " $(date +"%Y.%m.%d %H:%M:%S") >>/var/log/pbs-zfs-backup.log
 		;;
 esac
 
