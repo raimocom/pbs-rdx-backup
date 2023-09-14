@@ -209,7 +209,6 @@ else
 		########## prepare new backup media with new zpool (zpool create)
 		prepare_media
 		log ". . ok. ($backup_targetZfs)"
-		exit
 	else
        		log Backup-Pool ist "$backup_targetZfs"
 		log "Importiere $backup_targetZfs von /dev/disk/by-id/${backup_media_name}-part1 . ."
@@ -243,6 +242,7 @@ if [[ $zfs_incremental_snap == $zfs_target_snap ]] ; then
 	log "aktuellster Snapshot $zfs_target_snap auf Backupmedium vorhanden, nichts zu tun"
 elif [[ -z $zfs_incremental_snap ]] ; then
 	log "Kein Snapshot auf Backupmedium, sende komplettes Filesystem . ."
+	zpool export "$backup_targetZfs"
 	prepare_media
 	do_full_send $zfs_target_snap
 	log ". . ok"
