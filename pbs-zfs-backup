@@ -10,8 +10,16 @@ echo "$0" - a PBS ZFS datastore to USB media sync tool
 backup_sourceZfs=PBS-WD-2TB-intern
 backup_snapshot_basename=pbs-backupsnap
 new_backup_media_basename=nbp-proxmox-backup_$(date +%Y%m%d-%H%M%S)_0
+maillog_file=/tmp/pbs-zfs-backup.log
+maillog_to=info@naturbauhof-prenzlau.de,log@raimocom.de
+maillog_subject="NBHP Proxmox Serverbackup fertig ($(date +%d.%m.%Y))"
 
 # ---------------------
+# init log log
+touch "$maillog_file"
+echo "To: $maillog_to" >"$maillog_file"
+echo "Subject: $maillog_subject" >>"$maillog_file"
+
 
 # change to script dir
 cd "$(dirname "$0")" || exit 1
@@ -24,7 +32,7 @@ msg() { echo "$*" 1>&2; }
 
 log () {
 	timestamp=$(date +%Y-%m-%d_%H:%M:%S)
-	echo "$timestamp" - "$*";
+	echo "$timestamp" - "$*" | tee -a "$maillog_file" ;
 }
 
 cleanup_and_exit () {
@@ -275,6 +283,8 @@ log "Exportiere Pool . ."
 zpool export "$backup_targetZfs"
 log ". . fertig."
 
+#send mail
+msmtp -t < "$maillog_file"
 	
 
 ## read disk-id, vendor, serial, capacity from 
