@@ -1,0 +1,12 @@
+defaults
+tls on
+
+account logmailer
+host your.mailserver.hostname.here
+port 587
+auth on
+user your.mailerserver.username.here
+password your_passw0rd
+from email_adress@mailserver
+
+account default : logmailer

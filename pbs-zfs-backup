@@ -19,7 +19,7 @@ maillog_subject="NBHP Proxmox Serverbackup fertig ($(date +%d.%m.%Y))"
 touch "$maillog_file"
 echo "To: $maillog_to" >"$maillog_file"
 echo "Subject: $maillog_subject" >>"$maillog_file"
-
+echo -e "\n" >>"$maillog_file"
 
 # change to script dir
 cd "$(dirname "$0")" || exit 1
