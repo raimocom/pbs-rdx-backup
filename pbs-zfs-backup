@@ -7,11 +7,12 @@ trap 'echo ERROR: Fehler in Funktion "${FUNCNAME[0]}", Errorcode "$?" ; exit 1' 
 echo "$0" - a PBS ZFS datastore to USB media sync tool
 
 # default settings
-backup_sourceZfs=PBS-WD-2TB-intern
+backup_sourceZfs=PBS_2TB-SSD
 backup_snapshot_basename=pbs-backupsnap
 new_backup_media_basename=nbp-proxmox-backup_$(date +%Y%m%d-%H%M%S)_0
 maillog_file=/tmp/pbs-zfs-backup.log
-maillog_to=info@naturbauhof-prenzlau.de,log@raimocom.de
+#maillog_to=info@naturbauhof-prenzlau.de,log@raimocom.de
+maillog_to=log@raimocom.de
 maillog_subject="NBHP Proxmox Serverbackup fertig ($(date +%d.%m.%Y))"
 
 # ---------------------
@@ -196,6 +197,13 @@ if [[ -z $backup_media_name ]] ; then
 	exit 1
 else
 	log "Backupmedium $backup_media_name gefunden"
+fi
+
+# create first snapshot, if needed
+if [[ -z $(list_snapshots $backup_sourceZfs 2>/dev/null) ]] ; then
+	log "Backupsource $backup_sourceZfs noch ohne Snapshots. Erzeuge ersten Snapshot . ."
+	zfs snapshot "$backup_sourceZfs"@"$backup_snapshot_basename"_0
+	log ". . ok"
 fi
 
 # create new snapshot on source

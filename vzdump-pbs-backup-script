@@ -1,11 +1,12 @@
 #!/bin/bash
 timestamp=$(date +"%Y.%m.%d %H:%M:%S")
-#echo $timestamp : ${1} >>/tmp/vzdump-testhook-out.txt
 
 case "${1}" in
-	job-end)
+	job-start)
 		echo "+++++ Backup START" $(date +"%Y.%m.%d %H:%M:%S") >>/var/log/pbs-zfs-backup.log
-		/opt/proxmox-rdx-backup/pbs-zfs-backup >>/var/log/pbs-zfs-backup.log 2>&1
+		;;
+	job-end)
+		/opt/pbs-rdx-backup/pbs-zfs-backup >>/var/log/pbs-zfs-backup.log 2>&1
 		echo "----- Backup END  " $(date +"%Y.%m.%d %H:%M:%S") >>/var/log/pbs-zfs-backup.log
 		;;
 esac
