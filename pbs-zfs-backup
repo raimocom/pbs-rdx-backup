@@ -11,8 +11,8 @@ backup_sourceZfs=PBS_2TB-SSD
 backup_snapshot_basename=pbs-backupsnap
 new_backup_media_basename=nbp-proxmox-backup_$(date +%Y%m%d-%H%M%S)_0
 maillog_file=/tmp/pbs-zfs-backup.log
-#maillog_to=info@naturbauhof-prenzlau.de,log@raimocom.de
-maillog_to=log@raimocom.de
+maillog_to=info@naturbauhof-prenzlau.de,log@raimocom.de
+#maillog_to=log@raimocom.de
 maillog_subject="NBHP Proxmox Serverbackup fertig ($(date +%d.%m.%Y))"
 
 # ---------------------
@@ -125,7 +125,7 @@ remove_old_snapshots () {
 	if [[ $1 == $backup_sourceZfs ]] ; then
 		# read snapshot_tracker and remove all from backup_sourceZfs but oldest TWO existing on any backup media 
 		for snap in $(list_snapshots "$1" | awk '{ match($0, /[0-9]+$/) ; print substr ($0,RSTART,RLENGTH) }') ; do
-			if [[ $(($snap+1)) < $lowest_snapshot_number ]] ; then
+			if [[ $(($snap+1)) -lt $lowest_snapshot_number ]] ; then
 				log "removing ${backup_sourceZfs}@${backup_snapshot_basename}_$snap . ."
 				zfs destroy ${backup_sourceZfs}@${backup_snapshot_basename}_$snap
 				log ". . done"
@@ -133,7 +133,7 @@ remove_old_snapshots () {
 		done
 	else
 		# remove all but last 2 snapshot from backup media
-		for snap in $(list_snapshots "$1" | head -n -2) ; do 
+		for snap in $(list_snapshots "$1" | head -n -3) ; do 
 			log "removing ${backup_targetZfs}@$snap . ."
 			zfs destroy ${backup_targetZfs}@$snap
 			log ". . done"
@@ -147,6 +147,10 @@ do_incremental_send () {
 # INPUT: $1 ->  ZFS start snapshot ; $2 -> ZFS end snapshot
 # OUTPUT: none (+ update snapshot_tracker)
 	zfs send -V "$backup_sourceZfs"@"$2" -i @"$1" | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$2" | awk -F _ '{print $NF}')
+	if [[ $? -ne 0 ]] ; then
+		log "Error at do_incremental_send(). Cleanup media and do full send"
+		zpool export "$backup_targetZfs" && prepare_media && do_full_send $(get_last_backup_snapshot_name $backup_sourceZfs)
+	fi
 }
 
 do_full_send () {
@@ -233,7 +237,7 @@ else
 	fi
 fi
 
-
+# resume send needed?
 log "Resume Token auf $backup_targetZfs vorhanden? . ." 
 resume_token=$(get_resume_token "$backup_targetZfs")
 if [ -z "$resume_token" ]
@@ -279,13 +283,13 @@ else
 	snapshot_tracker[$backup_media_name]=$(echo "$zfs_incremental_snap" | awk -F _ '{print $NF}')
 	do_incremental_send $zfs_incremental_snap $zfs_target_snap
 	log ". . ok"
+	remove_old_snapshots $backup_targetZfs
+	remove_old_snapshots $backup_sourceZfs
 fi
 
 
 write_snapshot_tracker_db
 
-remove_old_snapshots $backup_targetZfs
-remove_old_snapshots $backup_sourceZfs
 
 log "Exportiere Pool . ."
 zpool export "$backup_targetZfs"
