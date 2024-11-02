@@ -6,14 +6,9 @@ trap 'echo ERROR: Fehler in Funktion "${FUNCNAME[0]}", Errorcode "$?" ; exit 1' 
 
 echo "$0" - a PBS ZFS datastore to USB media sync tool
 
-# default settings
-backup_sourceZfs=PBS_2TB-SSD
-backup_snapshot_basename=pbs-backupsnap
-new_backup_media_basename=nbp-proxmox-backup_$(date +%Y%m%d-%H%M%S)_0
-maillog_file=/tmp/pbs-zfs-backup.log
-maillog_to=info@ncustomer-mail-address.de,log@raimocom.de
+# load settings
+. settings.sh
 
-maillog_subject="Proxmox Serverbackup fertig ($(date +%d.%m.%Y))"
 
 # ---------------------
 # init log log
@@ -296,8 +291,8 @@ zpool export "$backup_targetZfs"
 log ". . fertig."
 
 #send mail
-msmtp -t < "$maillog_file"
-	
+#msmtp --host=$smtp_host --port=$smtp_port --protocol=smtp --auth=$smtp_auth --user=$smtp_user --tls=$smtp_tls --passwordeval='echo $smtp_password' -t < "$maillog_file"
+msmtp --host=$smtp_host --port=$smtp_port --protocol=smtp --auth=$smtp_auth --from=$smtp_sent_from --user=$smtp_user --tls=$smtp_tls --passwordeval="$smtp_password"  -t < "$maillog_file"	
 
 ## read disk-id, vendor, serial, capacity from 
 
