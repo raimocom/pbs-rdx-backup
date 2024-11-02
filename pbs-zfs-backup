@@ -11,9 +11,9 @@ backup_sourceZfs=PBS_2TB-SSD
 backup_snapshot_basename=pbs-backupsnap
 new_backup_media_basename=nbp-proxmox-backup_$(date +%Y%m%d-%H%M%S)_0
 maillog_file=/tmp/pbs-zfs-backup.log
-maillog_to=info@naturbauhof-prenzlau.de,log@raimocom.de
-#maillog_to=log@raimocom.de
-maillog_subject="NBHP Proxmox Serverbackup fertig ($(date +%d.%m.%Y))"
+maillog_to=info@ncustomer-mail-address.de,log@raimocom.de
+
+maillog_subject="Proxmox Serverbackup fertig ($(date +%d.%m.%Y))"
 
 # ---------------------
 # init log log
