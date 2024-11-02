@@ -291,7 +291,6 @@ zpool export "$backup_targetZfs"
 log ". . fertig."
 
 #send mail
-#msmtp --host=$smtp_host --port=$smtp_port --protocol=smtp --auth=$smtp_auth --user=$smtp_user --tls=$smtp_tls --passwordeval='echo $smtp_password' -t < "$maillog_file"
 msmtp --host=$smtp_host --port=$smtp_port --protocol=smtp --auth=$smtp_auth --from=$smtp_sent_from --user=$smtp_user --tls=$smtp_tls --passwordeval="$smtp_password"  -t < "$maillog_file"	
 
 ## read disk-id, vendor, serial, capacity from 
