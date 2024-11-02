@@ -1,0 +1,9 @@
+#!/bin/bash
+
+# default settings
+backup_sourceZfs=PBS_2TB-SSD
+backup_snapshot_basename=pbs-backupsnap
+new_backup_media_basename=customer_name-proxmox-backup_$(date +%Y%m%d-%H%M%S)_0
+maillog_file=/tmp/pbs-zfs-backup.log
+maillog_to=info@customer_mail_address.com.internal,log@techsupport-team.internal
+maillog_subject="Proxmox Serverbackup fertig ($(date +%d.%m.%Y))"
