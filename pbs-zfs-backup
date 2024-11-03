@@ -1,6 +1,7 @@
 #!/bin/bash
 set -o errtrace
 trap 'echo ERROR: Fehler in Funktion "${FUNCNAME[0]}", Errorcode "$?" ; exit 1' ERR
+retcode=NIL
 
 #set -xv
 
@@ -72,7 +73,8 @@ list_snapshots () {
 resume_send () {
 # IN: resume token
 # OUT: none
-	zfs send -t "$1" | zfs receive -sFv "$backup_targetZfs"
+	zfs send -t "$1" 2>/dev/null | zfs receive -sFv "$backup_targetZfs" 2>/dev/null
+	retcode=$?
 }
 
 identify_backup_media () {
@@ -241,9 +243,17 @@ then
 else
 	log "$resume_token"
 	log ". . ja. Setze Senden von $backup_sourceZfs zu $backup_targetZfs fort .. "
+	set +E #trap off
 	resume_send "$resume_token"
-	[ $? -ne 0 ] && { log "Fehler bei resume_send, Exit" ; exit 1 ; }
-	log ". . fertig."
+	set -E #trap on
+	if [[ $retcode -ne 0 ]] ; then
+		log "FEHLER: Resume fehlgeschlagen, lösche Medium und erzeuge neues ZFS-Filesystem . . "
+		zpool export "$backup_targetZfs"
+		prepare_media
+		log ". . ok. ($backup_targetZfs)"
+	else     
+		log ". . fertig."
+	fi
 fi
 
 # read snapshot_tracker.db into associative array snapshot_tracker[]
@@ -291,7 +301,7 @@ zpool export "$backup_targetZfs"
 log ". . fertig."
 
 #send mail
-msmtp --host=$smtp_host --port=$smtp_port --protocol=smtp --auth=$smtp_auth --from=$smtp_sent_from --user=$smtp_user --tls=$smtp_tls --passwordeval="$smtp_password"  -t < "$maillog_file"	
+msmtp --host=$smtp_host --port=$smtp_port --protocol=smtp --auth=$smtp_auth --from=$smtp_sent_from --user=$smtp_user --tls=$smtp_tls --passwordeval="echo $smtp_password"  -t < "$maillog_file"	
 
 ## read disk-id, vendor, serial, capacity from 
 
