@@ -1,14 +1,14 @@
 #!/bin/bash
 set -o errtrace
+#set -xv
 trap 'echo ERROR: Fehler in Funktion "${FUNCNAME[0]}", Errorcode "$?" ; exit 1' ERR
 retcode=NIL
-
-#set -xv
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 echo "$0" - a PBS ZFS datastore to USB media sync tool
 
 # load settings
-. settings.sh
+. $SCRIPT_DIR/settings.sh
 
 
 # ---------------------
@@ -120,9 +120,9 @@ create_snapshot () {
 remove_old_snapshots () {
 	[[ -z $1 ]] && return 1
 	if [[ $1 == $backup_sourceZfs ]] ; then
-		# read snapshot_tracker and remove all from backup_sourceZfs but oldest TWO existing on any backup media 
-		for snap in $(list_snapshots "$1" | awk '{ match($0, /[0-9]+$/) ; print substr ($0,RSTART,RLENGTH) }') ; do
-			if [[ $(($snap+1)) -lt $lowest_snapshot_number ]] ; then
+		# read snapshot_tracker and remove all from backup_sourceZfs but oldest X existing on any backup media (set in settings.sh)
+                for snap in $(list_snapshots "$1" | awk '{ match($0, /[0-9]+$/) ; print substr ($0,RSTART,RLENGTH) }') ; do
+                        if [[ $(($snap+$keep_snaps_on_sourceZFS)) -lt $lowest_snapshot_number ]] ; then
 				log "removing ${backup_sourceZfs}@${backup_snapshot_basename}_$snap . ."
 				zfs destroy ${backup_sourceZfs}@${backup_snapshot_basename}_$snap
 				log ". . done"
