@@ -2,7 +2,8 @@
 
 # default settings
 backup_sourceZfs=YOUR_ZFS_FS
-backup_snapshot_basename=pbs-backupsnap
+keep_snaps_on_sourceZFS=1
+backup_snapshot_basename=pbs-backupsnap #do not change atm!
 new_backup_media_basename=customer_name-proxmox-backup_$(date +%Y%m%d-%H%M%S)_0
 maillog_file=/tmp/pbs-zfs-backup.log
 maillog_to=info@customer_mail_address.com.internal,log@techsupport-team.internal
