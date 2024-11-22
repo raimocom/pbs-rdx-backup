@@ -130,7 +130,7 @@ remove_old_snapshots () {
 		done
 	else
 		# remove all but last 2 snapshot from backup media
-		for snap in $(list_snapshots "$1" | head -n -3) ; do 
+		for snap in $(list_snapshots "$1" | head -n -1) ; do 
 			log "removing ${backup_targetZfs}@$snap . ."
 			zfs destroy ${backup_targetZfs}@$snap
 			log ". . done"
