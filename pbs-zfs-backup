@@ -229,7 +229,7 @@ else
 	else
        		log Backup-Pool ist "$backup_targetZfs"
 		log "Importiere $backup_targetZfs von /dev/disk/by-id/${backup_media_name}-part1 . ."
-		zpool import ${backup_targetZfs} -d /dev/disk/by-id/${backup_media_name}-part1
+		zpool import -f ${backup_targetZfs} -d /dev/disk/by-id/${backup_media_name}-part1
 		log '. . fertig'
 	fi
 fi
