@@ -1,4 +1,8 @@
 #!/bin/bash
+
+#set PATH for use with crontab (really needed?)
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 set -o errtrace
 #set -xv
 trap 'echo ERROR: Fehler in Funktion "${FUNCNAME[0]}", Errorcode "$?" ; exit 1' ERR
