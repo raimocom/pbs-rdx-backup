@@ -147,17 +147,31 @@ remove_old_snapshots () {
 do_incremental_send () {
 # INPUT: $1 ->  ZFS start snapshot ; $2 -> ZFS end snapshot
 # OUTPUT: none (+ update snapshot_tracker)
-	zfs send -V "$backup_sourceZfs"@"$2" -i @"$1" | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$2" | awk -F _ '{print $NF}')
-	if [[ $? -ne 0 ]] ; then
-		log "Error at do_incremental_send(). Cleanup media and do full send"
-		zpool export "$backup_targetZfs" && prepare_media && do_full_send $(get_last_backup_snapshot_name $backup_sourceZfs)
-	fi
+
+        #determine and log estimated data size to be sent
+        unset zfs_send_Size
+        zfs_send_Size=$(zfs send -nv "$backup_sourceZfs"@"$2" -i @"$1" 2>/dev/null | grep total)
+        log "$zfs_send_Size"
+        
+        #do send
+        zfs send -V "$backup_sourceZfs"@"$2" -i @"$1" | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$2" | awk -F _ '{print $NF}')
+        if [[ $? -ne 0 ]] ; then
+                log "Error at do_incremental_send(). Cleanup media and do full send"
+                zpool export "$backup_targetZfs" && prepare_media && do_full_send $(get_last_backup_snapshot_name $backup_sourceZfs)
+        fi
 }
 
 do_full_send () {
 # INPUT: $1 ->  ZFS snapshot
 # OUTPUT: none (+ update snapshot_tracker)
-	zfs send -V "$backup_sourceZfs"@"$1" | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$1" | awk -F _ '{print $NF}')
+#
+        #determine and log estimated data size to be sent
+        unset zfs_send_Size
+        zfs_send_Size=$(zfs send -nv "$backup_sourceZfs"@"$1" 2>/dev/null | grep total)
+        log "$zfs_send_Size"
+        
+        #do send
+        zfs send -V "$backup_sourceZfs"@"$1" | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$1" | awk -F _ '{print $NF}')
 }
 
 get_resume_token () {
