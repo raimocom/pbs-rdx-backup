@@ -9,6 +9,9 @@ maillog_file=/tmp/pbs-zfs-backup.log
 maillog_to=info@customer_mail_address.com.internal,log@techsupport-team.internal
 maillog_subject="Proxmox Serverbackup fertig ($(date +%d.%m.%Y))"
 
+# healthchecks
+healthchecks_url=YOUR_HEALTHCHECKS_PING_URL
+
 # smtp settings for sending backuplog
 smtp_tls=on
 smtp_host=your.smtp-server.internal
