@@ -184,7 +184,7 @@ get_resume_token () {
 detect_inserted_backuppool () {
 # IN : none
 # OUT: vars; backuppool backup_media_name
-	for pool in $(zpool status | awk '{if($1 ~ /pool:/){print $2}}') ; do
+	for pool in $(zpool list -H -o name,health | grep -v SUSPENDED | awk '{print $1}') ; do
 		for poolstats in $(zpool status "$pool" | awk '{print $1}') ; do
 			for drive in $(awk '{print $1}' <backup_media.db ) ; do
 				if [[ $poolstats == $drive ]] ; then
