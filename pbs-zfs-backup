@@ -28,6 +28,7 @@ declare backup_targetZfs
 declare -A snapshot_tracker
 declare backup_media_name
 declare -i lowest_snapshot_number
+declare -i highest_snapshot_number
 
 msg() { echo "$*" 1>&2; }
 
@@ -42,11 +43,15 @@ cleanup_and_exit () {
 
 read_snapshot_tracker_db () {
 	unset lowest_snapshot_number
+	unset highest_snapshot_number
 	[[ -f snapshot_tracker.db ]] || return 1
 	while read -r drivename snapshot_number ; do
 	snapshot_tracker[$drivename]=$snapshot_number
 	if [[ -z $lowest_snapshot_number || $snapshot_number -lt $lowest_snapshot_number ]] ; then
 	       lowest_snapshot_number=$snapshot_number
+	fi
+	if [[ -z $highest_snapshot_number || $snapshot_number -gt $highest_snapshot_number ]] ; then
+	       highest_snapshot_number=$snapshot_number
 	fi
 	done < snapshot_tracker.db
 }
@@ -127,8 +132,13 @@ remove_old_snapshots () {
 		# read snapshot_tracker and remove all from backup_sourceZfs but oldest X existing on any backup media (set in settings.sh)
                 for snap in $(list_snapshots "$1" | awk '{ match($0, /[0-9]+$/) ; print substr ($0,RSTART,RLENGTH) }') ; do
                         if [[ $(($snap+$keep_snaps_on_sourceZFS)) -lt $lowest_snapshot_number ]] ; then
-				log "removing ${backup_sourceZfs}@${backup_snapshot_basename}_$snap . ."
-				zfs destroy ${backup_sourceZfs}@${backup_snapshot_basename}_$snap
+				log "removing expired snapshot ${backup_sourceZfs}@${backup_snapshot_basename}_$snap . ."
+				zfs destroy -v ${backup_sourceZfs}@${backup_snapshot_basename}_$snap
+				log ". . done"
+			fi
+                        if [[ $snap -gt $highest_snapshot_number ]] ; then
+				log "removing unused snapshot ${backup_sourceZfs}@${backup_snapshot_basename}_$snap . ."
+				zfs destroy -v ${backup_sourceZfs}@${backup_snapshot_basename}_$snap
 				log ". . done"
 			fi
 		done
