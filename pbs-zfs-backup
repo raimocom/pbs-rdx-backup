@@ -54,6 +54,9 @@ read_snapshot_tracker_db () {
 	       highest_snapshot_number=$snapshot_number
 	fi
 	done < snapshot_tracker.db
+
+	# no lowest snapshot exists yet
+	if [[ $lowest_snapshot_number -eq 0 ]] ; then lowest_snapshot_number=$highest_snapshot_number ; fi
 }
 
 write_snapshot_tracker_db () {
@@ -65,7 +68,7 @@ write_snapshot_tracker_db () {
 }
 
 prepare_media () {
-	wipefs -a /dev/disk/by-id/"$backup_media_name" &&\
+	wipefs -a /dev/disk/by-id/"$backup_media_name" 2>/dev/null &&\
 	zpool create -o ashift=12 ${new_backup_media_basename} /dev/disk/by-id/"$backup_media_name" &&\
 	zfs set canmount=noauto com.sun:auto-snapshot=false ${new_backup_media_basename}
 	backup_targetZfs=${new_backup_media_basename}
@@ -82,7 +85,10 @@ list_snapshots () {
 resume_send () {
 # IN: resume token
 # OUT: none
-	zfs send -t "$1" 2>/dev/null | zfs receive -sFv "$backup_targetZfs" 2>/dev/null
+	unset zfs_send_size_Bytes
+	zfs_send_size_Bytes=$(zfs send -nv -t "$1" 2>/dev/null | grep total | awk '{print $NF}')
+        log "total amount of data to transfer is $zfs_send_size_Bytes"
+	zfs send -t "$1" 2>/dev/null | pv -s $zfs_send_size_Bytes | zfs receive -sFv "$backup_targetZfs" 2>/dev/null
 	retcode=$?
 }
 
@@ -128,8 +134,11 @@ create_snapshot () {
 
 remove_old_snapshots () {
 	[[ -z $1 ]] && return 1
+	log "removing old snapshots from $1"
 	if [[ $1 == $backup_sourceZfs ]] ; then
 		# read snapshot_tracker and remove all from backup_sourceZfs but oldest X existing on any backup media (set in settings.sh)
+		#debug
+		log "keep snapshots from $backup_sourceZfs@$lowest_snapshot_number to $backup_sourceZfs@$highest_snapshot_number"
                 for snap in $(list_snapshots "$1" | awk '{ match($0, /[0-9]+$/) ; print substr ($0,RSTART,RLENGTH) }') ; do
                         if [[ $(($snap+$keep_snaps_on_sourceZFS)) -lt $lowest_snapshot_number ]] ; then
 				log "removing expired snapshot ${backup_sourceZfs}@${backup_snapshot_basename}_$snap . ."
@@ -159,12 +168,12 @@ do_incremental_send () {
 # OUTPUT: none (+ update snapshot_tracker)
 
         #determine and log estimated data size to be sent
-        unset zfs_send_Size
-        zfs_send_Size=$(zfs send -nv "$backup_sourceZfs"@"$2" -i @"$1" 2>/dev/null | grep total)
-        log "$zfs_send_Size"
-        
+	unset zfs_send_size_Bytes
+        zfs_send_size_Bytes=$(zfs send -nv "$backup_sourceZfs"@"$2" -i @"$1" 2>/dev/null | grep total | awk '{print $NF}')
+        log "total amount of data to transfer is $zfs_send_size_Bytes"
+
         #do send
-        zfs send -V "$backup_sourceZfs"@"$2" -i @"$1" | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$2" | awk -F _ '{print $NF}')
+        zfs send -V "$backup_sourceZfs"@"$2" -i @"$1" | pv -s $zfs_send_size_Bytes | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$2" | awk -F _ '{print $NF}')
         if [[ $? -ne 0 ]] ; then
                 log "Error at do_incremental_send(). Cleanup media and do full send"
                 zpool export "$backup_targetZfs" && prepare_media && do_full_send $(get_last_backup_snapshot_name $backup_sourceZfs)
@@ -176,12 +185,12 @@ do_full_send () {
 # OUTPUT: none (+ update snapshot_tracker)
 #
         #determine and log estimated data size to be sent
-        unset zfs_send_Size
-        zfs_send_Size=$(zfs send -nv "$backup_sourceZfs"@"$1" 2>/dev/null | grep total)
-        log "$zfs_send_Size"
-        
+	unset zfs_send_size_Bytes
+        zfs_send_size_Bytes=$(zfs send -nv "$backup_sourceZfs"@"$1" 2>/dev/null | grep total | awk '{print $NF}')
+        log "total amount of data to transfer is $zfs_send_size_Bytes"
+
         #do send
-        zfs send -V "$backup_sourceZfs"@"$1" | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$1" | awk -F _ '{print $NF}')
+        zfs send -V "$backup_sourceZfs"@"$1" | pv -s $zfs_send_size_Bytes | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$1" | awk -F _ '{print $NF}')
 }
 
 get_resume_token () {
@@ -231,14 +240,14 @@ fi
 # create first snapshot, if needed
 if [[ -z $(list_snapshots $backup_sourceZfs 2>/dev/null) ]] ; then
 	log "Backupsource $backup_sourceZfs noch ohne Snapshots. Erzeuge ersten Snapshot . ."
-	zfs snapshot "$backup_sourceZfs"@"$backup_snapshot_basename"_0
+	zfs snapshot "$backup_sourceZfs"@"$backup_snapshot_basename"_1
 	log ". . ok"
 fi
 
-# create new snapshot on source
-log "Letzter Snapshot $backup_sourceZfs@$(get_last_backup_snapshot_name $backup_sourceZfs). Erzeuge neuen ZFS-Snapshot . ."
-create_snapshot "$backup_sourceZfs"
-log ". . ok (@$(get_last_backup_snapshot_name $backup_sourceZfs))"
+# # create new snapshot on source
+# log "Letzter Snapshot $backup_sourceZfs@$(get_last_backup_snapshot_name $backup_sourceZfs). Erzeuge neuen ZFS-Snapshot . ."
+# create_snapshot "$backup_sourceZfs"
+# log ". . ok (@$(get_last_backup_snapshot_name $backup_sourceZfs))"
 
 # backup pool already imported?
 log "Suche Backuppool . . ."
@@ -287,6 +296,11 @@ fi
 # read snapshot_tracker.db into associative array snapshot_tracker[]
 read_snapshot_tracker_db
 
+# create new snapshot on source
+log "Letzter Snapshot $backup_sourceZfs@$(get_last_backup_snapshot_name $backup_sourceZfs). Erzeuge neuen ZFS-Snapshot . ."
+create_snapshot "$backup_sourceZfs"
+log ". . ok (@$(get_last_backup_snapshot_name $backup_sourceZfs))"
+
 zfs_target_snap=$(get_last_backup_snapshot_name "$backup_sourceZfs")
 zfs_incremental_snap=$(get_last_backup_snapshot_name "$backup_targetZfs")
 
@@ -317,11 +331,12 @@ else
 	do_incremental_send $zfs_incremental_snap $zfs_target_snap
 	log ". . ok"
 	remove_old_snapshots $backup_targetZfs
-	remove_old_snapshots $backup_sourceZfs
+#	remove_old_snapshots $backup_sourceZfs
 fi
 
 
 write_snapshot_tracker_db
+remove_old_snapshots $backup_sourceZfs
 
 
 log "Exportiere Pool . ."
