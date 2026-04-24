@@ -88,7 +88,7 @@ resume_send () {
 	unset zfs_send_size_Bytes
 	zfs_send_size_Bytes=$(zfs send -nv -t "$1" 2>/dev/null | grep total | awk '{print $NF}')
         log "total amount of data to transfer is $zfs_send_size_Bytes"
-	zfs send -t "$1" 2>/dev/null | pv -s $zfs_send_size_Bytes | zfs receive -sFv "$backup_targetZfs" 2>/dev/null
+	zfs send -t "$1" 2>/dev/null | pv -s $(convert_to_g $zfs_send_size_Bytes) | zfs receive -sFv "$backup_targetZfs" 2>/dev/null
 	retcode=$?
 }
 
@@ -173,7 +173,7 @@ do_incremental_send () {
         log "total amount of data to transfer is $zfs_send_size_Bytes"
 
         #do send
-        zfs send -V "$backup_sourceZfs"@"$2" -i @"$1" | pv -s $zfs_send_size_Bytes | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$2" | awk -F _ '{print $NF}')
+        zfs send -V "$backup_sourceZfs"@"$2" -i @"$1" | pv -s $(convert_to_g $zfs_send_size_Bytes) | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$2" | awk -F _ '{print $NF}')
         if [[ $? -ne 0 ]] ; then
                 log "Error at do_incremental_send(). Cleanup media and do full send"
                 zpool export "$backup_targetZfs" && prepare_media && do_full_send $(get_last_backup_snapshot_name $backup_sourceZfs)
@@ -190,7 +190,7 @@ do_full_send () {
         log "total amount of data to transfer is $zfs_send_size_Bytes"
 
         #do send
-        zfs send -V "$backup_sourceZfs"@"$1" | pv -s $zfs_send_size_Bytes | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$1" | awk -F _ '{print $NF}')
+        zfs send -V "$backup_sourceZfs"@"$1" | pv -s $(convert_to_g $zfs_send_size_Bytes) | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$1" | awk -F _ '{print $NF}')
 }
 
 get_resume_token () {
@@ -221,8 +221,25 @@ check_snapshot () {
 	zfs list -t snap "$1"@"$2" -H -o name 2>/dev/null
 }
 
+convert_to_g() {
+# IN : size value in K, M, G or T. float or integer
+# OUT: integer value in G 
+    local value unit
 
+    value=$(echo "$1" | grep -oE '[0-9]+(\.[0-9]+)?')
+    unit=$(echo "$1" | sed -E 's/[0-9]+(\.[0-9]+)?//I' | tr '[:lower:]' '[:upper:]')
+    unit="${unit:-G}"
 
+    case "$unit" in
+        K)  result=$(awk "BEGIN {printf \"%.0f\", $value / 1048576}") ;;
+        M)  result=$(awk "BEGIN {printf \"%.0f\", $value / 1024}") ;;
+        G)  result=$(awk "BEGIN {printf \"%.0f\", $value}") ;;
+        T)  result=$(awk "BEGIN {printf \"%.0f\", $value * 1024}") ;;
+        *)  result=0 ;;
+    esac
+
+    echo "${result}G"
+}
 #-#-#-#-#-#-#-#-#-#-# MAIN #-#-#-#-#-#-#-#-#-#-#-#-#
 
 read_snapshot_tracker_db
