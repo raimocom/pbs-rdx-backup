@@ -30,7 +30,7 @@ declare -A snapshot_tracker
 declare backup_media_name
 declare -i lowest_snapshot_number
 declare -i highest_snapshot_number
-declare -r pv_stats_out=/tmp/$(mktemp pv_stats_XXXXX.out)
+declare -r pv_stats_out=$(mktemp /tmp/pv_stats_XXXXX.out)
 declare -r lockfile="/var/lock/pbs-zfs-backup.lck"
 
 msg() { echo "$*" 1>&2; }
@@ -93,7 +93,7 @@ resume_send () {
 	unset zfs_send_size_Bytes
 	zfs_send_size_Bytes=$(zfs send -nv -t "$1" 2>/dev/null | grep total | awk '{print $NF}')
         log "total amount of data to transfer is $zfs_send_size_Bytes"
-	zfs send -t "$1" 2>/dev/null | pv -v -s $(convert_to_g $zfs_send_size_Bytes) 2>"$pv_stats_out" | zfs receive -sFv "$backup_targetZfs" 2>/dev/null
+	zfs send -t "$1" 2>/dev/null | pv -s $(convert_to_g $zfs_send_size_Bytes) | pv -v -s $(convert_to_g $zfs_send_size_Bytes) 2>"$pv_stats_out" | zfs receive -sFv "$backup_targetZfs" 2>/dev/null
 	retcode=$?
 	log "$(cat $pv_stats_out)"
 }
@@ -179,7 +179,7 @@ do_incremental_send () {
         log "total amount of data to transfer is $zfs_send_size_Bytes"
 
         #do send
-        zfs send -c -V "$backup_sourceZfs"@"$2" -i @"$1" | pv -v -s $(convert_to_g $zfs_send_size_Bytes) 2>"$pv_stats_out" | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$2" | awk -F _ '{print $NF}')
+        zfs send -c -V "$backup_sourceZfs"@"$2" -i @"$1" | pv -s $(convert_to_g $zfs_send_size_Bytes) | pv -v -s $(convert_to_g $zfs_send_size_Bytes) 2>"$pv_stats_out" | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$2" | awk -F _ '{print $NF}')
         if [[ $? -ne 0 ]] ; then
                 log "Error at do_incremental_send(). Cleanup media and do full send"
 		zpool export "$backup_targetZfs" && prepare_media && do_full_send $(get_last_backup_snapshot_name $backup_sourceZfs)
@@ -197,7 +197,7 @@ do_full_send () {
         log "total amount of data to transfer is $zfs_send_size_Bytes"
 
         #do send
-        zfs send -c -V "$backup_sourceZfs"@"$1" | pv -v -s $(convert_to_g $zfs_send_size_Bytes) 2>"$pv_stats_out" | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$1" | awk -F _ '{print $NF}')
+        zfs send -c -V "$backup_sourceZfs"@"$1" | pv -s $(convert_to_g $zfs_send_size_Bytes) | pv -v -s $(convert_to_g $zfs_send_size_Bytes) 2>"$pv_stats_out" | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$1" | awk -F _ '{print $NF}')
 	log "$(cat $pv_stats_out)"
 }
 
