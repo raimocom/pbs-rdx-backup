@@ -4,8 +4,9 @@
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 set -o errtrace
-#set -xv
-trap 'echo ERROR: Fehler in Funktion "${FUNCNAME[0]}", Errorcode "$?" ; exit 1' ERR
+# switch on script trace output
+# set -xv
+trap 'echo ERROR: Fehler in Funktion "${FUNCNAME[0]}", Errorcode "$?" ; cleanup_and_exit 1' ERR
 retcode=NIL
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
@@ -23,12 +24,14 @@ echo "Subject: $maillog_subject" >>"$maillog_file"
 echo -e "\n" >>"$maillog_file"
 
 # change to script dir
-cd "$(dirname "$0")" || exit 1
+cd "$(dirname "$0")" || cleanup_and_exit 1
 declare backup_targetZfs
 declare -A snapshot_tracker
 declare backup_media_name
 declare -i lowest_snapshot_number
 declare -i highest_snapshot_number
+declare -r pv_stats_out=/tmp/$(mktemp pv_stats_XXXXX.out)
+declare -r lockfile="/var/lock/pbs-zfs-backup.lck"
 
 msg() { echo "$*" 1>&2; }
 
@@ -38,7 +41,9 @@ log () {
 }
 
 cleanup_and_exit () {
-	true;
+	[[ -f $pv_stats_out ]] && rm $pv_stats_out 2>/dev/null
+	rm $lockfile
+	[[ -z $1 ]] && exit 0 || exit 1
 }
 
 read_snapshot_tracker_db () {
@@ -88,8 +93,9 @@ resume_send () {
 	unset zfs_send_size_Bytes
 	zfs_send_size_Bytes=$(zfs send -nv -t "$1" 2>/dev/null | grep total | awk '{print $NF}')
         log "total amount of data to transfer is $zfs_send_size_Bytes"
-	zfs send -t "$1" 2>/dev/null | pv -s $(convert_to_g $zfs_send_size_Bytes) | zfs receive -sFv "$backup_targetZfs" 2>/dev/null
+	zfs send -t "$1" 2>/dev/null | pv -v -s $(convert_to_g $zfs_send_size_Bytes) 2>"$pv_stats_out" | zfs receive -sFv "$backup_targetZfs" 2>/dev/null
 	retcode=$?
+	log "$(cat $pv_stats_out)"
 }
 
 identify_backup_media () {
@@ -173,11 +179,12 @@ do_incremental_send () {
         log "total amount of data to transfer is $zfs_send_size_Bytes"
 
         #do send
-        zfs send -V "$backup_sourceZfs"@"$2" -i @"$1" | pv -s $(convert_to_g $zfs_send_size_Bytes) | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$2" | awk -F _ '{print $NF}')
+        zfs send -c -V "$backup_sourceZfs"@"$2" -i @"$1" | pv -v -s $(convert_to_g $zfs_send_size_Bytes) 2>"$pv_stats_out" | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$2" | awk -F _ '{print $NF}')
         if [[ $? -ne 0 ]] ; then
                 log "Error at do_incremental_send(). Cleanup media and do full send"
-                zpool export "$backup_targetZfs" && prepare_media && do_full_send $(get_last_backup_snapshot_name $backup_sourceZfs)
+		zpool export "$backup_targetZfs" && prepare_media && do_full_send $(get_last_backup_snapshot_name $backup_sourceZfs)
         fi
+	log "$(cat $pv_stats_out)"
 }
 
 do_full_send () {
@@ -190,7 +197,8 @@ do_full_send () {
         log "total amount of data to transfer is $zfs_send_size_Bytes"
 
         #do send
-        zfs send -V "$backup_sourceZfs"@"$1" | pv -s $(convert_to_g $zfs_send_size_Bytes) | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$1" | awk -F _ '{print $NF}')
+        zfs send -c -V "$backup_sourceZfs"@"$1" | pv -v -s $(convert_to_g $zfs_send_size_Bytes) 2>"$pv_stats_out" | zfs recv -sFv "$backup_targetZfs" && snapshot_tracker[$backup_media_name]=$(echo "$1" | awk -F _ '{print $NF}')
+	log "$(cat $pv_stats_out)"
 }
 
 get_resume_token () {
@@ -242,6 +250,15 @@ convert_to_g() {
 }
 #-#-#-#-#-#-#-#-#-#-# MAIN #-#-#-#-#-#-#-#-#-#-#-#-#
 
+#check/create lockfile
+if [[ -f $lockfile ]] ; then
+	log "Fehler: Lockfile $lockfile gefunden. Eine andere Instanz läuft bereits."
+	cleanup_and_exit 1
+else
+	touch $lockfile
+fi
+
+
 read_snapshot_tracker_db
 
 # identify backup media
@@ -249,7 +266,7 @@ log "Suche Backupmedium . . ."
 backup_media_name=$(identify_backup_media)
 if [[ -z $backup_media_name ]] ; then
 	log "ERROR: Kein Backupmedium angeschlossen. Exit"
-	exit 1
+	cleanup_and_exit 1
 else
 	log "Backupmedium $backup_media_name gefunden"
 fi
@@ -348,7 +365,6 @@ else
 	do_incremental_send $zfs_incremental_snap $zfs_target_snap
 	log ". . ok"
 	remove_old_snapshots $backup_targetZfs
-#	remove_old_snapshots $backup_sourceZfs
 fi
 
 
@@ -363,16 +379,8 @@ log ". . fertig."
 #send mail
 msmtp --host=$smtp_host --port=$smtp_port --protocol=smtp --auth=$smtp_auth --from=$smtp_sent_from --user=$smtp_user --tls=$smtp_tls --passwordeval="echo $smtp_password"  -t < "$maillog_file"	
 
-## read disk-id, vendor, serial, capacity from 
-
-### check media condition 
-# if (no ZFS on media){
-# 	prepare empty media()
-#	}
-#  
-#	
+cleanup_and_exit
 
 #### cleanup
-# zfs destroy all but last snapshot on backup media
 # zfs destroy all snapshots that are not the last snapshot on any of the backup media (snapshot_holds.db)
 
